@@ -18,7 +18,7 @@ class DataIterator:
         self.vocab_file = vocab_file
         self.vocab = {}
 
-        self.batch_size = 8
+        self.batch_size = 32
         self.src = None
         self.tgt = None
         self.len = None

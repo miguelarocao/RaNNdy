@@ -86,7 +86,7 @@ class SentenceAutoEncoder:
             start_train_time = time.time()
 
             epoch = 1
-            while epoch < self.num_epochs:
+            while epoch <= self.num_epochs:
                 ### Run a step ###
                 start_time = time.time()
                 try:
@@ -102,6 +102,8 @@ class SentenceAutoEncoder:
                     continue
 
         plt.plot(losses)
+        plt.ylabel('loss')
+        plt.xlabel('steps')
         plt.show()
 
     def infer(self):
