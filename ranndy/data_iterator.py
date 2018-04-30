@@ -19,9 +19,11 @@ class DataIterator:
         self.vocab = {}
 
         self.batch_size = 32
-        self.src = None
-        self.tgt = None
-        self.len = None
+
+        # Dataset tensors
+        self.source = None # Each datapoint is a sentence represented as a vector of integers (word labels)
+        self.target = None # Each datapoint is a a sentence represented as a vector of integers (word labels)
+        self.sentence_length = None # Each datapoint is an integer
 
         self.load_vocabulary()
         self.load_dataset()
@@ -48,19 +50,26 @@ class DataIterator:
 
         # Split dataset sentences into vector of words
         sentences = sentences.map(lambda s: tf.string_split([s]).values)
+
         # Update dataset to use word keys instead of strings
         sentences = sentences.map(lambda words: (tf.cast(self.table.lookup(words), tf.int32)))
-        # Add target (one-hot encoding) to dataset
+
+        # Add target labels to dataset
         sentences = sentences.map(lambda src: (src, src))
+
         # Add length of each sentence to dataset
         sentences = sentences.map(lambda src, tgt: (src, tgt, tf.size(src)))
+
+        # Shuffle data on each iteration
+        #   Note: On larger datasets we will probably have to increase the buffer size for appropriate randomness.
+        sentences = sentences.shuffle(buffer_size=10000, reshuffle_each_iteration=True)
 
         # TODO: properly define and add eos token
         sentences = sentences.padded_batch(self.batch_size,
                    padded_shapes=(
-                       tf.TensorShape([None]),  # src
-                       tf.TensorShape([None]),  # tgt
-                       tf.TensorShape([])),  # len
+                       tf.TensorShape([None]),  # source
+                       tf.TensorShape([None]),  # target
+                       tf.TensorShape([])),  # sentence_length
                        # Pad the source and target sequences with eos tokens.
                        # (Though notice we don't generally need to do this since
                        # later on we will be masking out calculations past the true sequence.
@@ -72,4 +81,4 @@ class DataIterator:
         self.iterator = sentences.make_initializable_iterator()
         self.next_element = self.iterator.get_next()
         self.initializer = self.iterator.initializer
-        self.src, self.tgt, self.len = self.next_element
+        self.source, self.target, self.sentence_length = self.next_element

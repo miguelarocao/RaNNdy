@@ -21,10 +21,10 @@ def main():
     dp = DataPreprocessor()
 
     # Step 1: Load Dataset
-    di = DataIterator(dp.sentences_file, dp.vocabulary_file)
+    data_iterator = DataIterator(dp.sentences_file, dp.vocabulary_file)
 
     # Step 2: Create Auto Encoder
-    ranndy = SentenceAutoEncoder(di)
+    ranndy = SentenceAutoEncoder(data_iterator)
 
     # Step 3: Run training
     ranndy.train()

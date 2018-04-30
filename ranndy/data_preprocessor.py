@@ -38,7 +38,7 @@ class DataPreprocessor:
             for word in word_set:
                 fout.write(word + '\n')
 
-        print("Vocabulary is of size ${len(word_set)}")
+        print(f"Vocabulary is of size {len(word_set)}")
 
     def sentence_generator(self, filename):
         # Generator that reads file and yields each sentence
