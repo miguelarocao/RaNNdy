@@ -84,9 +84,10 @@ class DataIterator:
                                            # Pad the source and target sequences with eos tokens.
                                            # (Though notice we don't generally need to do this since
                                            # later on we will be masking out calculations past the true sequence.
-                                           # padding_values=(
-                                           #     src_eos_id,  # src
-                                           #     0) # src_len
+                                           padding_values=(
+                                               self.lookup_indexes(self.eos_marker),  # source
+                                               self.lookup_indexes(self.eos_marker), # target
+                                               0) # src_len
                                            )
         # Initialize dataset iterator
         self.iterator = sentences.make_initializable_iterator()
@@ -96,7 +97,7 @@ class DataIterator:
 
     def lookup_indexes(self, words):
         """ Returns the index(es) for the given word(s) in the vocabulary """
-        return tf.to_int32(self.table.lookup(words))
+        return tf.to_int32(self.table.lookup(tf.convert_to_tensor(words)))
 
     def lookup_words(self, indexes):
         """ Returns the vocabulary word(s) for the given index(es)"""

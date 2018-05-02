@@ -66,8 +66,8 @@ class SentenceAutoEncoder:
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             helper = tf.contrib.seq2seq.TrainingHelper(self.embedding_output, self.iterator.sentence_length)
         else:
-            sos_token = self.iterator.lookup_indexes(tf.convert_to_tensor(self.iterator.sos_marker))
-            eos_token = self.iterator.lookup_indexes(tf.convert_to_tensor(self.iterator.eos_marker))
+            sos_token = self.iterator.lookup_indexes(self.iterator.sos_marker)
+            eos_token = self.iterator.lookup_indexes(self.iterator.eos_marker)
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
                                                               tf.fill([self.batch_size], sos_token),
                                                               eos_token)
