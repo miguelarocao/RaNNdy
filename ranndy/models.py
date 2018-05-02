@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import time
+import data_helpers as dh
 
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
@@ -8,20 +9,21 @@ import time
 class SentenceAutoEncoder:
     """ Sentence auto encoder """
 
-    def __init__(self, data_iterator):
+    def __init__(self, data_iterator, mode=tf.estimator.ModeKeys.TRAIN):
         """
         :param data_iterator: [ranndy.DataIterator] iterate through data
         """
 
+        # Train or Infer
+        self.mode = mode
+
+        # TODO: set up hyperparams properly
         self.embedding_size = 256
         self.lstm_size = 512
-        # TODO: set up hyperparams properly
         self.batch_size = data_iterator.batch_size
         self.num_epochs = 10
         self.max_gradient_norm = 1.
         self.learning_rate = 0.0001
-        # Roughly based on 2 std from https://english.stackexchange.com/questions/276715/standard-deviation-for-average-sentence-and-paragraph-length
-        self.max_time = 50
 
         # Data iterator
         self.iterator = data_iterator
@@ -32,7 +34,12 @@ class SentenceAutoEncoder:
         self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
         self._build_encoder()
         self._build_decoder()
-        self._build_trainer()
+        if self.mode == tf.estimator.ModeKeys.TRAIN:
+            self._build_trainer()
+
+        # Saver
+        self.saver = tf.train.Saver()
+        self.checkpoint_path = "../data/checkpoints/checkpoint.ckpt"
 
     def _build_embedding(self, shape):
         self.embedding = tf.get_variable(
@@ -56,18 +63,31 @@ class SentenceAutoEncoder:
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(self.lstm_size)
 
         # Helper
-        helper = tf.contrib.seq2seq.TrainingHelper(self.embedding_output, self.iterator.sentence_length)
+        if self.mode == tf.estimator.ModeKeys.TRAIN:
+            helper = tf.contrib.seq2seq.TrainingHelper(self.embedding_output, self.iterator.sentence_length)
+        else:
+            sos_token = self.iterator.lookup_indexes(tf.convert_to_tensor(self.iterator.sos_marker))
+            eos_token = self.iterator.lookup_indexes(tf.convert_to_tensor(self.iterator.eos_marker))
+            helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
+                                                              tf.fill([self.batch_size], sos_token),
+                                                              eos_token)
 
         # Decoder
         decoder = tf.contrib.seq2seq.BasicDecoder(self.decoder_cell, helper, self.encoder_state,
                                                   output_layer=projection_layer)
 
         # Dynamic decoding
-        self.outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(decoder)
-        self.logits = self.outputs.rnn_output
+        if self.mode == tf.estimator.ModeKeys.TRAIN:
+            # Training
+            self.outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder)
+            self.logits = self.outputs.rnn_output
+        else:
+            # Inference
+            self.outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, maximum_iterations=tf.round(
+                tf.reduce_max(self.iterator.sentence_length) * 2))
 
     def _build_trainer(self):
-
+        # TODO: Figure out why target_weights is necessary
         target_weights = tf.sequence_mask(self.iterator.sentence_length, dtype=self.logits.dtype)
 
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target,
@@ -86,6 +106,7 @@ class SentenceAutoEncoder:
         self.update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
 
     def train(self):
+        assert (self.mode == tf.estimator.ModeKeys.TRAIN)
         losses = []
         with tf.Session() as sess:
             self.iterator.table.init.run()
@@ -111,20 +132,25 @@ class SentenceAutoEncoder:
 
             print(f"Run time: {time.time() - start_time}")
 
+            self.saver.save(sess, self.checkpoint_path)
+            print(f"Model saved to {self.checkpoint_path}")
+
         plt.plot(losses)
-        plt.ylabel('loss')
-        plt.xlabel('steps')
+        plt.ylabel('crossent error')
+        plt.xlabel('batch #')
         plt.show()
 
-    def infer(self):
+    def infer(self, num_batch_infer):
+        assert (self.mode == tf.estimator.ModeKeys.PREDICT)
         with tf.Session() as sess:
+            self.saver.restore(sess, self.checkpoint_path)
+            print(f"Model loaded from {self.checkpoint_path}")
             self.iterator.table.init.run()
+            self.iterator.reverse_table.init.run()
             sess.run(self.iterator.initializer)
-            sess.run(tf.global_variables_initializer())
-            for i in range(3):
-                sentence, length, embeddings = sess.run([self.source,
-                                                         self.target_length,
-                                                         self.embedding_output])
-                print(f"Sentence: {sentence}")
-                print(f"Length: {length}")
-                print(f"Embeddings: {embeddings}")
+            for i in range(num_batch_infer):
+                #self.iterator.lookup_words(self.outputs.sample_id)
+                originals, results = sess.run([self.iterator.lookup_words(self.iterator.source),
+                                               self.iterator.lookup_words(self.outputs.sample_id)])
+                for original, result in zip(originals, results):
+                    print(f"Original: {dh.byte_vec_to_sentence(original)} Result: {dh.byte_vec_to_sentence(result)}")
