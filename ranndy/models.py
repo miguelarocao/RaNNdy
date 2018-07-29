@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import time
 import data_helpers as dh
-
+from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
@@ -40,6 +40,9 @@ class SentenceAutoEncoder:
         # Saver
         self.saver = tf.train.Saver()
         self.checkpoint_path = "../data/checkpoints/checkpoint.ckpt"
+
+        # Detokenizer
+        self.detokenizer = TreebankWordDetokenizer()
 
     def _build_embedding(self, shape):
         self.embedding = tf.get_variable(
@@ -85,6 +88,7 @@ class SentenceAutoEncoder:
             # Inference
             self.outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, maximum_iterations=tf.round(
                 tf.reduce_max(self.iterator.sentence_length) * 2))
+            self.logits = self.outputs.rnn_output
 
     def _build_trainer(self):
         # TODO: Figure out why target_weights is necessary
@@ -105,21 +109,28 @@ class SentenceAutoEncoder:
         optimizer = tf.train.AdamOptimizer(self.learning_rate)
         self.update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
 
-    def train(self):
+    def train(self, plot=False, verbose=True):
         assert (self.mode == tf.estimator.ModeKeys.TRAIN)
         losses = []
         with tf.Session() as sess:
             self.iterator.table.init.run()
+            self.iterator.reverse_table.init.run()
             sess.run(self.iterator.initializer)
             sess.run(tf.global_variables_initializer())
 
             start_time = time.time()
 
             epoch = 1
+            first_batch = True
             while epoch <= self.num_epochs:
                 ### Run a step ###
                 try:
-                    loss, _ = sess.run([self.train_loss, self.update_step])
+                    loss, _, source, output, words = sess.run([self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id, self.iterator.lookup_words(self.outputs.sample_id)])
+                    if first_batch and verbose:
+                        print(f"Input tokens (size: {len(source[0])}): {source[0]}")
+                        print(f"Output tokens (size: {len(output[0])}): {output[0]}")
+                        print(f"Output words (size: {len(words[0])}): {list(map(lambda x: x.decode(), words[0]))}")
+                        first_batch = False
                     losses.append(loss)
 
                 except tf.errors.OutOfRangeError:
@@ -127,6 +138,7 @@ class SentenceAutoEncoder:
                     print(f"[Epoch: {epoch}] Train Loss: {loss}")
                     epoch += 1
                     sess.run(self.iterator.initializer)
+                    first_batch = True
 
                     continue
 
@@ -135,10 +147,11 @@ class SentenceAutoEncoder:
             self.saver.save(sess, self.checkpoint_path)
             print(f"Model saved to {self.checkpoint_path}")
 
-        plt.plot(losses)
-        plt.ylabel('crossent error')
-        plt.xlabel('batch #')
-        plt.show()
+        if plot:
+            plt.plot(losses)
+            plt.ylabel('crossent error')
+            plt.xlabel('batch #')
+            plt.show()
 
     def infer(self, num_batch_infer):
         assert (self.mode == tf.estimator.ModeKeys.PREDICT)
@@ -153,4 +166,4 @@ class SentenceAutoEncoder:
                 originals, results = sess.run([self.iterator.lookup_words(self.iterator.source),
                                                self.iterator.lookup_words(self.outputs.sample_id)])
                 for original, result in zip(originals, results):
-                    print(f"Original: {dh.byte_vec_to_sentence(original)} Result: {dh.byte_vec_to_sentence(result)}")
+                    print(f"Original: {dh.byte_vec_to_sentence(original, self.detokenizer)} Result: {dh.byte_vec_to_sentence(result, self.detokenizer)}")

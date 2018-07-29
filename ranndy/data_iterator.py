@@ -11,8 +11,8 @@ Various TODOs:
 
 class DataIterator:
     def __init__(self, data_file, vocab_file, batch_size=32, shuffle=True):
-        """"
-        :param sentences: [tf.data.Dataset]
+        """
+        :param sentence_tokens: [tf.data.Dataset]
         :param vocabulary: [dict]
         """
         self.data_file = data_file
@@ -38,7 +38,7 @@ class DataIterator:
         # Add words from vocabulary file
         with open(self.vocab_file, 'r') as f:
             for line in f.readlines():
-                word = line.rstrip()
+                word = line .split(',')[0]
                 assert (word not in self.vocab)
 
                 self.vocab.append(word)
@@ -57,7 +57,7 @@ class DataIterator:
         sentences = tf.data.TextLineDataset(self.data_file)
 
         # Split dataset sentences into vector of words
-        sentences = sentences.map(lambda s: tf.string_split([s]).values)
+        sentences = sentences.map(lambda s: tf.string_split([s], delimiter=",").values)
 
         # Add start and end of sentence token to each sentence
         sentences = sentences.map(lambda s: tf.concat([[self.sos_marker], s, [self.eos_marker]], axis=0))
