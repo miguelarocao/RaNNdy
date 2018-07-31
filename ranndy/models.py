@@ -30,7 +30,8 @@ class SentenceAutoEncoder:
 
         # Setup embedding
         self.embedding = None
-        self.embedding_output = None
+        self.enc_embedding_output = None
+        self.dec_embedding_output = None
         self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
         self._build_encoder()
         self._build_decoder()
@@ -48,13 +49,14 @@ class SentenceAutoEncoder:
         self.embedding = tf.get_variable(
             "embedding", shape=shape, initializer=tf.random_normal_initializer)
 
-        self.embedding_output = tf.nn.embedding_lookup(self.embedding, self.iterator.source)
+        self.enc_embedding_output = tf.nn.embedding_lookup(self.embedding, self.iterator.source)
+        self.dec_embedding_output = tf.nn.embedding_lookup(self.embedding, self.iterator.target_input)
 
     def _build_encoder(self):
         # Build RNN cell
         self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size)
-        self.encoder_outputs, self.encoder_state = tf.nn.dynamic_rnn(self.encoder_cell, self.embedding_output,
-                                                                     sequence_length=self.iterator.sentence_length,
+        self.encoder_outputs, self.encoder_state = tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
+                                                                     sequence_length=self.iterator.source_length,
                                                                      dtype=tf.float32)
 
     def _build_decoder(self):
@@ -67,7 +69,7 @@ class SentenceAutoEncoder:
 
         # Helper
         if self.mode == tf.estimator.ModeKeys.TRAIN:
-            helper = tf.contrib.seq2seq.TrainingHelper(self.embedding_output, self.iterator.sentence_length)
+            helper = tf.contrib.seq2seq.TrainingHelper(self.dec_embedding_output, self.iterator.target_length)
         else:
             sos_token = self.iterator.lookup_indexes(self.iterator.sos_marker)
             eos_token = self.iterator.lookup_indexes(self.iterator.eos_marker)
@@ -87,14 +89,14 @@ class SentenceAutoEncoder:
         else:
             # Inference
             self.outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, maximum_iterations=tf.round(
-                tf.reduce_max(self.iterator.sentence_length) * 2))
+                tf.reduce_max(self.iterator.target_length) * 2))
             self.logits = self.outputs.rnn_output
 
     def _build_trainer(self):
         # TODO: Figure out why target_weights is necessary
-        target_weights = tf.sequence_mask(self.iterator.sentence_length, dtype=self.logits.dtype)
+        target_weights = tf.sequence_mask(self.iterator.target_length, dtype=self.logits.dtype)
 
-        crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target,
+        crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target_output,
                                                                   logits=self.logits)
 
         self.train_loss = (tf.reduce_sum(crossent * target_weights) / self.batch_size)
