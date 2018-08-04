@@ -8,7 +8,7 @@ def parse_sentences(input_file, token_output_file, vocab_output_file, num_word_p
     :param input_file: [String] Input file containing sentences to parse. One sentence per line.
     :param token_output_file: [String] Output file or tokenized sentences.
     :param vocab_output_file: [String] Output file for vocabulary.
-    :param num_word_print: [Int] Number of words to print from the vocabulary. No particular order.
+    :param num_word_print: [Int] Number of words to print from the vocabulary. Ordered by frequency.
     """
     printable = string.printable
     word_dict = {} # {word: count}

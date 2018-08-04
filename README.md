@@ -6,3 +6,4 @@
 
 - Python 3.6
 - Tensorflow 1.7
+- NLTK 3.3
