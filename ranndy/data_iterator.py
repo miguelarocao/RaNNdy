@@ -1,6 +1,5 @@
 import tensorflow as tf
-import string
-import tensorflow.contrib.lookup as lookup
+import csv
 
 '''
 Various TODOs:
@@ -39,8 +38,9 @@ class DataIterator:
 
         # Add words from vocabulary file
         with open(self.vocab_file, 'r') as f:
-            for line in f.readlines():
-                word = line.split(',')[0]
+            reader = csv.reader(f)
+            for line in reader:
+                word = line[0]
                 assert (word not in self.vocab)
 
                 self.vocab.append(word)

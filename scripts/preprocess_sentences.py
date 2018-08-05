@@ -1,18 +1,25 @@
 import string
 import argparse
 import nltk
+import csv
 
-def parse_sentences(input_file, token_output_file, vocab_output_file, num_word_print=10):
+def parse_sentences(input_file, token_output_file, vocab_output_file, max_length=32, num_word_print=10):
     """
     Parses input sentences. Outputs tokenized sentences and a vocabulary with word counts.
+    Note that all words are taken into account in the vocabulary, even if they are truncated due to the sentence being
+    too long.
+
     :param input_file: [String] Input file containing sentences to parse. One sentence per line.
     :param token_output_file: [String] Output file or tokenized sentences.
     :param vocab_output_file: [String] Output file for vocabulary.
+    :param max_length: [String] Maximum sentence length (based on word count) which will be stored  . Longer sentences are
+        truncated.
     :param num_word_print: [Int] Number of words to print from the vocabulary. Ordered by frequency.
     """
     printable = string.printable
     word_dict = {} # {word: count}
     with open(input_file, 'r') as fin, open(token_output_file, 'w') as fout:
+        writer = csv.writer(fout)
         for line in fin.readlines():
 
             line = line.rstrip().lstrip()
@@ -35,11 +42,12 @@ def parse_sentences(input_file, token_output_file, vocab_output_file, num_word_p
                     word_dict[word] = 0
                 word_dict[word] += 1
 
-            fout.write(",".join(words) + '\n')
+            writer.writerow(words[:max_length])
 
     with open(vocab_output_file, 'w') as fout:
+        writer = csv.writer(fout)
         for word, count in word_dict.items():
-            fout.write(f"{word},{count}\n")
+            writer.writerow([word, count])
 
     # Print some info
     print(f"Vocabulary is of size {len(word_dict)}")
