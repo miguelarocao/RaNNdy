@@ -1,26 +1,27 @@
 import tensorflow as tf
 import csv
-
-'''
-Various TODOs:
-- Map rare known words to UNK (unknown) token to limit vocabulary size.
-- Initialize embedding with CBOW or Skip-Gram.
-'''
-
+import heapq as hq
+import math
 
 class DataIterator:
-    def __init__(self, data_file, vocab_file, batch_size=32, shuffle=True):
+    def __init__(self, data_file, vocab_file, batch_size=32, shuffle=True, max_vocab_size=-1):
         """
-        :param sentence_tokens: [tf.data.Dataset]
-        :param vocabulary: [dict]
+        :param data_file: [String] CSV file of sentence tokens.
+        :param vocab_file: [String] CSV file of vocabulary with frequency.
+        :param batch_size: [Int] Batch size for iteration.
+        :param shuffle: [Boolean] Whether the data should be shuffled (by line).
+        :param max_vocab_size: [Int] Maximum vocabulary size. -1 means no limit.
         """
         self.data_file = data_file
         self.vocab_file = vocab_file
         self.vocab = []
+        self.vocab_size = 0
 
         self.batch_size = batch_size
-        self.sos_marker = "<s>"  # Start Of Sentence marker
-        self.eos_marker = "<\s>"  # End Of Sentence marker
+        self.sos_token = "<s>"  # Start Of Sentence token
+        self.eos_token = "<\s>"  # End Of Sentence token
+        self.unk_token = "<UNK>" # Unknown word token
+        self.num_oov_buckets = 1 # Number of out of vocabulary buckets
 
         # Dataset tensors
         self.source = None  # Each datapoint is a sentence represented as a vector of integers (word labels)
@@ -29,35 +30,51 @@ class DataIterator:
         self.source_length = None  # Each datapoint is an integer
         self.target_length = None  # Each datapoint is an integer
 
-        self.load_vocabulary()
+        self.load_vocabulary(max_vocab_size)
         self.load_dataset(shuffle)
 
-    def load_vocabulary(self):
-        # Add SOS and EOS tokens
-        self.vocab += [self.sos_marker, self.eos_marker]
+    def load_vocabulary(self, max_vocab_size=-1):
+        """
+        Loads the vocabulary and creates lookup tables.
+        :param max_vocab_size: [Int] Maximum vocabulary size. -1 means no limit.
+        :return:
+        """
+        # Due to out of vocabulary bucket, the working max_vocab_size is less
+        working_max_vocab_size = max_vocab_size - self.num_oov_buckets
+
+        # We'll use a heap to keep track of of our "max_vocab_size" most frequent vocabulary words.
+        # For consistency, we break word frequency ties by lexicographical order
+        vocab_heap = []
+
+        # Add SOS and EOS tokens (with infinite frequency so they cannot be removed)
+        hq.heappush(vocab_heap, (math.inf, self.sos_token))
+        hq.heappush(vocab_heap, (math.inf, self.eos_token))
 
         # Add words from vocabulary file
         with open(self.vocab_file, 'r') as f:
             reader = csv.reader(f)
             for line in reader:
-                word = line[0]
-                assert (word not in self.vocab)
+                heap_entry = (int(line[1]), line[0]) # Order by frequency, then word
+                if len(vocab_heap) < working_max_vocab_size or max_vocab_size == -1:
+                    hq.heappush(vocab_heap, heap_entry)
+                else:
+                    hq.heappushpop(vocab_heap, heap_entry)
 
-                self.vocab.append(word)
+        # Now convert our heap to the vocab
+        self.vocab = set([x[1] for x in vocab_heap])
+        self.vocab_size = len(self.vocab) + self.num_oov_buckets
 
-        self.vocab_size = len(self.vocab)
-
-        # Create vocabulary lookup
-        self.table = tf.contrib.lookup.index_table_from_tensor(tf.constant(self.vocab), default_value=-1)
+        # Create vocabulary lookup. There is 1 OOV bucket for words outside the vocabulary.
+        self.table = tf.contrib.lookup.index_table_from_tensor(tf.constant(list(self.vocab)), num_oov_buckets=self.num_oov_buckets)
 
         # Create reverse lookup table
         self.reverse_table = tf.contrib.lookup.index_to_string_table_from_tensor(
-            tf.constant(self.vocab), default_value="UNKNOWN")
+            tf.constant(list(self.vocab)), default_value=self.unk_token)
 
     def load_dataset(self, shuffle):
         # Get start and end of sentence indices
-        sos_index = self.lookup_indexes(self.sos_marker)
-        eos_index = self.lookup_indexes(self.eos_marker)
+        sos_index = self.lookup_indexes(self.sos_token)
+        eos_index = self.lookup_indexes(self.eos_token)
 
         # Create dataset
         sentences = tf.data.TextLineDataset(self.data_file)
@@ -91,9 +108,9 @@ class DataIterator:
                                            # (Though notice we don't generally need to do this since
                                            # later on we will be masking out calculations past the true sequence.
                                            padding_values=(
-                                               self.lookup_indexes(self.eos_marker),  # source
-                                               self.lookup_indexes(self.eos_marker),  # target_input
-                                               self.lookup_indexes(self.eos_marker),  # target_output
+                                               self.lookup_indexes(self.eos_token),  # source
+                                               self.lookup_indexes(self.eos_token),  # target_input
+                                               self.lookup_indexes(self.eos_token),  # target_output
                                                0,  # source_length
                                                0)  # target_length
                                            )
