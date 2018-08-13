@@ -6,3 +6,5 @@ def byte_vec_to_sentence(vec, detokenizer):
     :return: [String] Output sentence.
     """
     return detokenizer.detokenize(map(lambda x: x.decode("utf-8"), vec))
+
+
