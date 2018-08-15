@@ -4,7 +4,7 @@ Use https://docs.genius.com/ to create an api client.
 App Name: RaNNdy
 APP WEBSITE URL: https://github.com/miguelarocao/RaNNdy
 Save client_id and access_token in a json file to use as credentials.
-Run preprocess_senteneces.py after scraping.
+Run preprocess_sentences.py after scraping.
 """
 
 from requests_oauthlib import OAuth2Session
@@ -100,25 +100,25 @@ def main():
 
     args = parser.parse_args()
 
-    # Load credentials
-    # with open(args.credentials, 'r') as f:
-    #     credentials = json.load(f)
+    Load credentials
+    with open(args.credentials, 'r') as f:
+        credentials = json.load(f)
 
-    # client = get_client(credentials['client_id'], credentials['access_token'])
-    # artists = search_artist(client, args.artist)
-    # # print(artists)
-    # assert len(artists) == 1, f"There were multiple artists found! Please be more specific: {artists.keys()}"
+    client = get_client(credentials['client_id'], credentials['access_token'])
+    artists = search_artist(client, args.artist)
+    # print(artists)
+    assert len(artists) == 1, f"There were multiple artists found! Please be more specific: {artists.keys()}"
 
-    # songs = get_artist_songs(client, artists[args.artist])
+    songs = get_artist_songs(client, artists[args.artist])
 
-    # print(f"{len(songs)} songs were found for {args.artist}.")
+    print(f"{len(songs)} songs were found for {args.artist}.")
 
-    # with open(args.output, 'w') as f:
-    #     for i, song in enumerate(songs):
-    #         print(f"[{i}/{len(songs)}] Fetching song lyrics for '{song['title']}'...", end='')
-    #         lyrics = get_song_lyrics(song['url'])
-    #         print(f"Parsing...")
-    #         f.writelines(parse_lyrics(lyrics))
+    with open(args.output, 'w') as f:
+        for i, song in enumerate(songs):
+            print(f"[{i}/{len(songs)}] Fetching song lyrics for '{song['title']}'...", end='')
+            lyrics = get_song_lyrics(song['url'])
+            print(f"Parsing...")
+            f.writelines(parse_lyrics(lyrics))
 
 
 if __name__ == '__main__':
