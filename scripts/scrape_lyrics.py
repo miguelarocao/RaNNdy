@@ -1,5 +1,12 @@
-# Scrapes lyrics from Genius for a given artist
-# Reference: docs.genius.com
+"""
+Scrapes lyrics from Genius for a given artist using Genius API.
+Use https://docs.genius.com/ to create an api client.
+App Name: RaNNdy
+APP WEBSITE URL: https://github.com/miguelarocao/RaNNdy
+Save client_id and access_token in a json file to use as credentials.
+Run preprocess_sentences.py after scraping.
+"""
+
 from requests_oauthlib import OAuth2Session
 from bs4 import BeautifulSoup
 import requests
@@ -99,6 +106,7 @@ def main():
 
     client = get_client(credentials['client_id'], credentials['access_token'])
     artists = search_artist(client, args.artist)
+    # print(artists)
     assert len(artists) == 1, f"There were multiple artists found! Please be more specific: {artists.keys()}"
 
     songs = get_artist_songs(client, artists[args.artist])

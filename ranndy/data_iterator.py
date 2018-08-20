@@ -66,16 +66,15 @@ class DataIterator:
 
         # Create vocabulary lookup. There is 1 OOV bucket for words outside the vocabulary.
         self.table = tf.contrib.lookup.index_table_from_tensor(tf.constant(list(self.vocab)), num_oov_buckets=self.num_oov_buckets)
+        # Get start and end of sentence indices
+        self.sos_index = self.lookup_indices(tf.convert_to_tensor(self.sos_token))
+        self.eos_index = self.lookup_indices(tf.convert_to_tensor(self.eos_token))
 
         # Create reverse lookup table
         self.reverse_table = tf.contrib.lookup.index_to_string_table_from_tensor(
-            tf.constant(list(self.vocab)), default_value=self.unk_token)
+                                tf.constant(list(self.vocab)), default_value=self.unk_token)
 
     def load_dataset(self, shuffle):
-        # Get start and end of sentence indices
-        sos_index = self.lookup_indexes(self.sos_token)
-        eos_index = self.lookup_indexes(self.eos_token)
-
         # Create dataset
         sentences = tf.data.TextLineDataset(self.data_file)
 
@@ -83,11 +82,11 @@ class DataIterator:
         sentences = sentences.map(lambda s: tf.string_split([s], delimiter=",").values)
 
         # Update dataset to use word keys instead of strings
-        sentences = sentences.map(lambda words: self.lookup_indexes(words))
+        sentences = sentences.map(lambda words: self.lookup_indices(words))
 
         # Add target inputs and outputs, concatenate <sos> to target_input start and <eos> to target_output end
         sentences = sentences.map(
-            lambda src: (src, tf.concat(([sos_index], src), axis=0), tf.concat((src, [eos_index]), axis=0)))
+            lambda src: (src, tf.concat(([self.sos_index], src), axis=0), tf.concat((src, [self.eos_index]), axis=0)))
 
         # Add length of each sentence to dataset
         sentences = sentences.map(lambda src, tgt_in, tgt_out: (src, tgt_in, tgt_out, tf.size(src), tf.size(tgt_out)))
@@ -108,9 +107,9 @@ class DataIterator:
                                            # (Though notice we don't generally need to do this since
                                            # later on we will be masking out calculations past the true sequence.
                                            padding_values=(
-                                               self.lookup_indexes(self.eos_token),  # source
-                                               self.lookup_indexes(self.eos_token),  # target_input
-                                               self.lookup_indexes(self.eos_token),  # target_output
+                                               self.eos_index,  # source
+                                               self.eos_index,  # target_input
+                                               self.eos_index,  # target_output
                                                0,  # source_length
                                                0)  # target_length
                                            )
@@ -120,10 +119,10 @@ class DataIterator:
         self.initializer = self.iterator.initializer
         self.source, self.target_input, self.target_output, self.source_length, self.target_length = self.next_element
 
-    def lookup_indexes(self, words):
-        """ Returns the index(es) for the given word(s) in the vocabulary """
-        return tf.to_int32(self.table.lookup(tf.convert_to_tensor(words)))
-
-    def lookup_words(self, indexes):
-        """ Returns the vocabulary word(s) for the given index(es)"""
-        return self.reverse_table.lookup(tf.to_int64(indexes))
+    def lookup_words(self, indices):
+        # CAUTION: this returns a tensor, do not use in a loop otherwise it will create a memory overflow
+        return self.reverse_table.lookup(tf.to_int64(indices))
+    
+    def lookup_indices(self, words):
+        # CAUTION: this returns a tensor, do not use in a loop otherwise it will create a memory overflow
+        return self.table.lookup(words)

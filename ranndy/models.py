@@ -35,6 +35,8 @@ class SentenceAutoEncoder:
         self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
         self._build_encoder()
         self._build_decoder()
+        self.input_words = self.iterator.lookup_words(self.iterator.source)
+        self.output_words = self.iterator.lookup_words(self.outputs.sample_id)
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             self._build_trainer()
 
@@ -71,11 +73,10 @@ class SentenceAutoEncoder:
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             helper = tf.contrib.seq2seq.TrainingHelper(self.dec_embedding_output, self.iterator.target_length)
         else:
-            sos_token = self.iterator.lookup_indexes(self.iterator.sos_marker)
-            eos_token = self.iterator.lookup_indexes(self.iterator.eos_marker)
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
-                                                              tf.fill([self.batch_size], sos_token),
-                                                              eos_token)
+                                                              tf.fill([self.batch_size], 
+                                                              self.iterator.sos_index),
+                                                              self.iterator.eos_index)
 
         # Decoder
         decoder = tf.contrib.seq2seq.BasicDecoder(self.decoder_cell, helper, self.encoder_state,
@@ -127,11 +128,16 @@ class SentenceAutoEncoder:
             while epoch <= self.num_epochs:
                 ### Run a step ###
                 try:
-                    loss, _, source, output, words = sess.run([self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id, self.iterator.lookup_words(self.outputs.sample_id)])
+                    to_run = [self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id, 
+                              self.input_words, self.output_words]
+
+                    loss, _, source, output, in_words, out_words = sess.run(to_run)
+
                     if first_batch and verbose:
                         print(f"Input tokens (size: {len(source[0])}): {source[0]}")
                         print(f"Output tokens (size: {len(output[0])}): {output[0]}")
-                        print(f"Output words (size: {len(words[0])}): {list(map(lambda x: x.decode(), words[0]))}")
+                        print(f"Input words (size: {len(in_words[0])}): {list(map(lambda x: x.decode(), in_words[0]))}")
+                        print(f"Output words (size: {len(out_words[0])}): {list(map(lambda x: x.decode(), out_words[0]))}")
                         first_batch = False
                     losses.append(loss)
 
@@ -165,7 +171,6 @@ class SentenceAutoEncoder:
             sess.run(self.iterator.initializer)
             for i in range(num_batch_infer):
                 #self.iterator.lookup_words(self.outputs.sample_id)
-                originals, results = sess.run([self.iterator.lookup_words(self.iterator.source),
-                                               self.iterator.lookup_words(self.outputs.sample_id)])
+                originals, results = sess.run(self.input_words, self.output_words)
                 for original, result in zip(originals, results):
                     print(f"Original: {dh.byte_vec_to_sentence(original, self.detokenizer)} Result: {dh.byte_vec_to_sentence(result, self.detokenizer)}")
