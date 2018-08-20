@@ -1,8 +1,8 @@
+import nltk
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import time
 import data_helpers as dh
-from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
@@ -39,13 +39,18 @@ class SentenceAutoEncoder:
         self.output_words = self.iterator.reverse_table.lookup(tf.to_int64(self.outputs.sample_id))
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             self._build_trainer()
+            # Training, validation, and testing lists to run
+            self.run = {}
+            self.run["val"] = [self.loss, self.iterator.source, self.outputs.sample_id, self.input_words, self.output_words]
+            self.run["train"] = self.run["val"] + [self.update_step]
+            self.run["test"] = list(self.run["val"])
 
         # Saver
         self.saver = tf.train.Saver()
         self.checkpoint_path = "../data/checkpoints/checkpoint.ckpt"
 
         # Detokenizer
-        self.detokenizer = TreebankWordDetokenizer()
+        self.detokenizer = nltk.tokenize.treebank.TreebankWordDetokenizer()
 
     def _build_embedding(self, shape):
         self.embedding = tf.get_variable(
@@ -100,11 +105,11 @@ class SentenceAutoEncoder:
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target_output,
                                                                   logits=self.logits)
 
-        self.train_loss = (tf.reduce_sum(crossent * target_weights) / self.batch_size)
+        self.loss = (tf.reduce_sum(crossent * target_weights) / self.batch_size)
 
         # Calculate and clip gradients
         params = tf.trainable_variables()
-        gradients = tf.gradients(self.train_loss, params)
+        gradients = tf.gradients(self.loss, params)
         clipped_gradients, _ = tf.clip_by_global_norm(
             gradients, self.max_gradient_norm)
 
@@ -112,42 +117,63 @@ class SentenceAutoEncoder:
         optimizer = tf.train.AdamOptimizer(self.learning_rate)
         self.update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
 
+    def run_epoch(self, sess, data_type, verbose=True):
+        results = sess.run(self.run[data_type])
+
+        in_words = [list(map(lambda x: x.decode(), y)) for y in results[3]]
+        out_words = [list(map(lambda x: x.decode(), y)) for y in results[4]]
+
+        # Calculate average bleu score over data
+        cum_bleu_score = 0.
+        for in_, out_ in zip(results[3], results[4]):
+            cum_bleu_score += nltk.translate.bleu_score.sentence_bleu([in_], out_)
+        avg_blue_score = cum_bleu_score / float(len(in_words))
+
+        if verbose:
+            print(f"Input tokens (size: {len(results[1][0])}): {results[1][0]}")
+            print(f"Output tokens (size: {len(results[2][0])}): {results[2][0]}")
+            print(f"Input words (size: {len(results[3][0])}): {' '.join(in_words[0])}")
+            print(f"Output words (size: {len(results[4][0])}): {' '.join(out_words[0])}")
+
+        return results[0], avg_blue_score
+
+
     def train(self, plot=False, verbose=True):
+        # Not sure this is necessary
         assert (self.mode == tf.estimator.ModeKeys.TRAIN)
         losses = []
+        bleu_scores = []
+        data_type = "train"
+        loss, bleu_score = None, None
         with tf.Session() as sess:
             self.iterator.table.init.run()
             self.iterator.reverse_table.init.run()
-            sess.run(self.iterator.initializer)
             sess.run(tf.global_variables_initializer())
+            sess.run(self.iterator.initializer[data_type])
 
             start_time = time.time()
 
             epoch = 1
             first_batch = True
             while epoch <= self.num_epochs:
-                ### Run a step ###
+                ### Run a train step ###
                 try:
-                    to_run = [self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id, 
-                              self.input_words, self.output_words]
-
-                    loss, _, source, output, in_words, out_words = sess.run(to_run)
-
-                    if first_batch and verbose:
-                        print(f"Input tokens (size: {len(source[0])}): {source[0]}")
-                        print(f"Output tokens (size: {len(output[0])}): {output[0]}")
-                        print(f"Input words (size: {len(in_words[0])}): {list(map(lambda x: x.decode(), in_words[0]))}")
-                        print(f"Output words (size: {len(out_words[0])}): {list(map(lambda x: x.decode(), out_words[0]))}")
-                        first_batch = False
+                    loss, bleu_score = self.run_epoch(sess, data_type, verbose=verbose and first_batch)
                     losses.append(loss)
-
+                    bleu_scores.append(bleu_score)
+                    first_batch = False
                 except tf.errors.OutOfRangeError:
                     # Finished going through the training dataset.  Go to next epoch.
-                    print(f"[Epoch: {epoch}] Train Loss: {loss}")
-                    epoch += 1
-                    sess.run(self.iterator.initializer)
+                    print(f"[Epoch: {epoch}] {data_type.capitalize()} Loss: {loss} BLEU score: {bleu_score}")
+                    loss, bleu_score = None, None
+                    if data_type == "train":
+                        data_type = "val"
+                    else:
+                        data_type = "train"
+                        epoch += 1
+                    print(data_type)
+                    sess.run(self.iterator.initializer[data_type])
                     first_batch = True
-
                     continue
 
             print(f"Run time: {time.time() - start_time}")
@@ -160,6 +186,27 @@ class SentenceAutoEncoder:
             plt.ylabel('crossent error')
             plt.xlabel('batch #')
             plt.show()
+
+    def test(self, verbose=True):
+        with tf.Session() as sess:
+            self.saver.restore(sess, self.checkpoint_path)
+            self.iterator.table.init.run()
+            self.iterator.reverse_table.init.run()
+            sess.run(tf.global_variables_initializer())
+            sess.run(self.iterator.initializer["test"])
+
+            start_time = time.time()
+
+            ### Run a test step ###
+            while True:
+                try:
+                    loss, bleu_score = self.run_epoch(sess, "test", verbose=verbose)
+                    print(f"Test results\nLoss: {loss} BLEU score: {bleu_score}")
+                except tf.errors.OutOfRangeError:
+                    # Finished going through the training dataset.  Go to next epoch.
+                    break
+
+            print(f"Run time: {time.time() - start_time}")
 
     def infer(self, num_batch_infer):
         assert (self.mode == tf.estimator.ModeKeys.PREDICT)

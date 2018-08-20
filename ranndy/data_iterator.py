@@ -4,7 +4,7 @@ import heapq as hq
 import math
 
 class DataIterator:
-    def __init__(self, data_file, vocab_file, batch_size=32, shuffle=True, max_vocab_size=-1):
+    def __init__(self, data_file, vocab_file, batch_size=32, val_ratio=0.15, test_ratio=0.15, shuffle=True, max_vocab_size=-1):
         """
         :param data_file: [String] CSV file of sentence tokens.
         :param vocab_file: [String] CSV file of vocabulary with frequency.
@@ -16,6 +16,9 @@ class DataIterator:
         self.vocab_file = vocab_file
         self.vocab = []
         self.vocab_size = 0
+        self.train_ratio = 1. - val_ratio - test_ratio
+        self.val_ratio = val_ratio
+        self.test_ratio = test_ratio
 
         self.batch_size = batch_size
         self.sos_token = "<s>"  # Start Of Sentence token
@@ -24,11 +27,13 @@ class DataIterator:
         self.num_oov_buckets = 1 # Number of out of vocabulary buckets
 
         # Dataset tensors
-        self.source = None  # Each datapoint is a sentence represented as a vector of integers (word labels)
-        self.target_input = None  # Each datapoint is a a sentence represented as a vector of integers (word labels)
-        self.target_output = None  # Each datapoint is a a sentence represented as a vector of integers (word labels)
-        self.source_length = None  # Each datapoint is an integer
-        self.target_length = None  # Each datapoint is an integer
+        self.source = {}  # Each datapoint is a sentence represented as a vector of integers (word labels)
+        self.target_input = {}  # Each datapoint is a a sentence represented as a vector of integers (word labels)
+        self.target_output = {}  # Each datapoint is a a sentence represented as a vector of integers (word labels)
+        self.source_length = {}  # Each datapoint is an integer
+        self.target_length = {}  # Each datapoint is an integer
+        self.input_sentences = {} # Training, validation, test datasets
+        self.initializer = {} # Training, validation, and test dataset initializers
 
         self.load_vocabulary(max_vocab_size)
         self.load_dataset(shuffle)
@@ -75,8 +80,15 @@ class DataIterator:
                                 tf.constant(list(self.vocab)), default_value=self.unk_token)
 
     def load_dataset(self, shuffle):
+        # Get the size of the dataset
+        self.dataset_size = sum(1 for line in open(self.data_file))
+        self.train_size = int(self.dataset_size * self.train_ratio)
+        self.val_size = int(self.dataset_size * self.val_ratio)
+        print(f"Total: {self.dataset_size}, training: {self.train_size}, validation: {self.val_size}")
+
         # Create dataset
         sentences = tf.data.TextLineDataset(self.data_file)
+        # sentences = sentences.take(1000)
 
         # Split dataset sentences into vector of words
         sentences = sentences.map(lambda s: tf.string_split([s], delimiter=",").values)
@@ -89,32 +101,42 @@ class DataIterator:
             lambda src: (src, tf.concat(([self.sos_index], src), axis=0), tf.concat((src, [self.eos_index]), axis=0)))
 
         # Add length of each sentence to dataset
-        sentences = sentences.map(lambda src, tgt_in, tgt_out: (src, tgt_in, tgt_out, tf.size(src), tf.size(tgt_out)))
+        sentences = sentences.map(lambda src, tgt_in, tgt_out: (src, tgt_in, tgt_out, tf.size(src, out_type=tf.int32), tf.size(tgt_out, out_type=tf.int32)))
 
         # Shuffle data on each iteration
         #   Note: On larger datasets we will probably have to increase the buffer size for appropriate randomness.
         if shuffle:
-            sentences = sentences.shuffle(buffer_size=10000, reshuffle_each_iteration=True)
+            sentences = sentences.shuffle(buffer_size=self.dataset_size, reshuffle_each_iteration=True)
 
-        sentences = sentences.padded_batch(self.batch_size,
-                                           padded_shapes=(
-                                               tf.TensorShape([None]),  # source
-                                               tf.TensorShape([None]),  # target_input
-                                               tf.TensorShape([None]),  # target_output
-                                               tf.TensorShape([]),  # source_length
-                                               tf.TensorShape([])),  # target_length
-                                           # Pad the source and target sequences with eos tokens.
-                                           # (Though notice we don't generally need to do this since
-                                           # later on we will be masking out calculations past the true sequence.
-                                           padding_values=(
-                                               self.eos_index,  # source
-                                               self.eos_index,  # target_input
-                                               self.eos_index,  # target_output
-                                               0,  # source_length
-                                               0)  # target_length
-                                           )
-        # Initialize dataset iterator
-        self.iterator = sentences.make_initializable_iterator()
-        self.next_element = self.iterator.get_next()
-        self.initializer = self.iterator.initializer
-        self.source, self.target_input, self.target_output, self.source_length, self.target_length = self.next_element
+        self.input_sentences["train"] = sentences.take(self.train_size)
+        self.input_sentences["val"] = sentences.skip(self.train_size)
+        self.input_sentences["test"] = self.input_sentences["val"].skip(self.val_size)
+        self.input_sentences["val"] = self.input_sentences["val"].take(self.val_size)
+
+        for data_type in ["train", "val", "test"]:
+            self.input_sentences[data_type] = \
+                sentences.padded_batch(self.batch_size,
+                                       padded_shapes=(
+                                           tf.TensorShape([None]),  # source
+                                           tf.TensorShape([None]),  # target_input
+                                           tf.TensorShape([None]),  # target_output
+                                           tf.TensorShape([]),  # source_length
+                                           tf.TensorShape([])),  # target_length
+                                       # Pad the source and target sequences with eos tokens.
+                                       # (Though notice we don't generally need to do this since
+                                       # later on we will be masking out calculations past the true sequence.
+                                       padding_values=(
+                                           self.eos_index,  # source
+                                           self.eos_index,  # target_input
+                                           self.eos_index,  # target_output
+                                           tf.zeros([], dtype=tf.int32),  # source_length
+                                           tf.zeros([], dtype=tf.int32))  # target_length
+                                       )
+
+        iterator = tf.data.Iterator.from_structure(self.input_sentences["train"].output_types, output_shapes=self.input_sentences["train"].output_shapes)
+
+        self.initializer["train"] = iterator.make_initializer(self.input_sentences["train"])
+        self.initializer["val"] = iterator.make_initializer(self.input_sentences["val"])
+        self.initializer["test"] = iterator.make_initializer(self.input_sentences["test"])
+
+        self.source, self.target_input, self.target_output, self.source_length, self.target_length = iterator.get_next()

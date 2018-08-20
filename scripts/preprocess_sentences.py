@@ -3,6 +3,7 @@ import argparse
 import nltk
 import csv
 import re
+
 cList = {
   "ain't": "am not",
   "aren't": "are not",
@@ -190,6 +191,7 @@ def rap_word_expansion(sentence):
     return sentence.replace("in' ", "ing ")
 
 def expand_contractions(text, c_re=c_re):
+    """ Expands common english contractions using dictionary at the top of the file """
     def replace(match):
         return cList[match.group(0)]
     return c_re.sub(replace, text.lower())
