@@ -72,8 +72,8 @@ class DataIterator:
         # Create vocabulary lookup. There is 1 OOV bucket for words outside the vocabulary.
         self.table = tf.contrib.lookup.index_table_from_tensor(tf.constant(list(self.vocab)), num_oov_buckets=self.num_oov_buckets)
         # Get start and end of sentence indices
-        self.sos_index = self.table.lookup(tf.convert_to_tensor(self.sos_token))
-        self.eos_index = self.table.lookup(tf.convert_to_tensor(self.eos_token))
+        self.sos_index = self.lookup_indices(tf.convert_to_tensor(self.sos_token))
+        self.eos_index = self.lookup_indices(tf.convert_to_tensor(self.eos_token))
 
         # Create reverse lookup table
         self.reverse_table = tf.contrib.lookup.index_to_string_table_from_tensor(
@@ -94,7 +94,7 @@ class DataIterator:
         sentences = sentences.map(lambda s: tf.string_split([s], delimiter=",").values)
 
         # Update dataset to use word keys instead of strings
-        sentences = sentences.map(lambda words: self.table.lookup(words))
+        sentences = sentences.map(lambda words: self.lookup_indices(words))
 
         # Add target inputs and outputs, concatenate <sos> to target_input start and <eos> to target_output end
         sentences = sentences.map(
@@ -140,3 +140,11 @@ class DataIterator:
         self.initializer["test"] = iterator.make_initializer(self.input_sentences["test"])
 
         self.source, self.target_input, self.target_output, self.source_length, self.target_length = iterator.get_next()
+
+    def lookup_words(self, indices):
+        # CAUTION: this returns a tensor, do not use in a loop otherwise it will create a memory overflow
+        return self.reverse_table.lookup(tf.to_int64(indices))
+    
+    def lookup_indices(self, words):
+        # CAUTION: this returns a tensor, do not use in a loop otherwise it will create a memory overflow
+        return self.table.lookup(words)

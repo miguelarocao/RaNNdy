@@ -35,8 +35,8 @@ class SentenceAutoEncoder:
         self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
         self._build_encoder()
         self._build_decoder()
-        self.input_words = self.iterator.reverse_table.lookup(tf.to_int64(self.iterator.source))
-        self.output_words = self.iterator.reverse_table.lookup(tf.to_int64(self.outputs.sample_id))
+        self.input_words = self.iterator.lookup_words(self.iterator.source)
+        self.output_words = self.iterator.lookup_words(self.outputs.sample_id)
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             self._build_trainer()
             # Training, validation, and testing lists to run

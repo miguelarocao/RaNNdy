@@ -100,7 +100,7 @@ def main():
 
     args = parser.parse_args()
 
-    Load credentials
+    # Load credentials
     with open(args.credentials, 'r') as f:
         credentials = json.load(f)
 
