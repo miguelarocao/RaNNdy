@@ -3,7 +3,7 @@ import argparse
 import tensorflow as tf
 
 from data_iterator import DataIterator
-from models import SentenceAutoEncoder
+from models.vae import SentenceVAE
 
 
 def main():
@@ -22,8 +22,8 @@ def main():
         # Step 1: Load Dataset
         data_iterator = DataIterator(args.sentence_tokens, args.vocab, max_vocab_size=args.max_vocab_size)
 
-        # Step 2: Create Auto Encoder in Trainng Mode
-        ranndy = SentenceAutoEncoder(data_iterator, tf.estimator.ModeKeys.TRAIN)
+        # Step 2: Create Auto Encoder in Training Mode
+        ranndy = SentenceVAE(data_iterator, tf.estimator.ModeKeys.TRAIN)
 
         # Step 3: Train
         ranndy.train()
@@ -33,7 +33,7 @@ def main():
                                      max_vocab_size=args.max_vocab_size)
 
         # Step 2: Create Auto Encoder in Inference Mode
-        ranndy = SentenceAutoEncoder(data_iterator, tf.estimator.ModeKeys.PREDICT)
+        ranndy = SentenceVAE(data_iterator, tf.estimator.ModeKeys.PREDICT)
 
         # Step 3: Infer
         ranndy.infer(num_batch_infer=1)

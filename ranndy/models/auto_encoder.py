@@ -4,6 +4,7 @@ import time
 import data_helpers as dh
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 
+
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
 class SentenceAutoEncoder:
@@ -13,7 +14,6 @@ class SentenceAutoEncoder:
         """
         :param data_iterator: [ranndy.DataIterator] iterate through data
         """
-
         # Train or Infer
         self.mode = mode
 
@@ -32,6 +32,7 @@ class SentenceAutoEncoder:
         self.embedding = None
         self.enc_embedding_output = None
         self.dec_embedding_output = None
+        self.decoder_state_input = None
         self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
         self._build_encoder()
         self._build_decoder()
@@ -57,9 +58,11 @@ class SentenceAutoEncoder:
     def _build_encoder(self):
         # Build RNN cell
         self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size)
-        self.encoder_outputs, self.encoder_state = tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
-                                                                     sequence_length=self.iterator.source_length,
-                                                                     dtype=tf.float32)
+        _, encoder_state = tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
+                                             sequence_length=self.iterator.source_length,
+                                             dtype=tf.float32)
+        # Assign encoder state as decoder state input
+        self.decoder_state_input = encoder_state
 
     def _build_decoder(self):
         # Projection layer: Necessary because LSTM output size (which is same as state size) will probably be different
@@ -74,12 +77,12 @@ class SentenceAutoEncoder:
             helper = tf.contrib.seq2seq.TrainingHelper(self.dec_embedding_output, self.iterator.target_length)
         else:
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
-                                                              tf.fill([self.batch_size], 
-                                                              self.iterator.sos_index),
+                                                              tf.fill([self.batch_size],
+                                                                      self.iterator.sos_index),
                                                               self.iterator.eos_index)
 
         # Decoder
-        decoder = tf.contrib.seq2seq.BasicDecoder(self.decoder_cell, helper, self.encoder_state,
+        decoder = tf.contrib.seq2seq.BasicDecoder(self.decoder_cell, helper, initial_state=self.decoder_state_input,
                                                   output_layer=projection_layer)
 
         # Dynamic decoding
@@ -128,7 +131,7 @@ class SentenceAutoEncoder:
             while epoch <= self.num_epochs:
                 ### Run a step ###
                 try:
-                    to_run = [self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id, 
+                    to_run = [self.train_loss, self.update_step, self.iterator.source, self.outputs.sample_id,
                               self.input_words, self.output_words]
 
                     loss, _, source, output, in_words, out_words = sess.run(to_run)
@@ -137,7 +140,8 @@ class SentenceAutoEncoder:
                         print(f"Input tokens (size: {len(source[0])}): {source[0]}")
                         print(f"Output tokens (size: {len(output[0])}): {output[0]}")
                         print(f"Input words (size: {len(in_words[0])}): {list(map(lambda x: x.decode(), in_words[0]))}")
-                        print(f"Output words (size: {len(out_words[0])}): {list(map(lambda x: x.decode(), out_words[0]))}")
+                        print(
+                            f"Output words (size: {len(out_words[0])}): {list(map(lambda x: x.decode(), out_words[0]))}")
                         first_batch = False
                     losses.append(loss)
 
@@ -170,7 +174,7 @@ class SentenceAutoEncoder:
             self.iterator.reverse_table.init.run()
             sess.run(self.iterator.initializer)
             for i in range(num_batch_infer):
-                #self.iterator.lookup_words(self.outputs.sample_id)
                 originals, results = sess.run(self.input_words, self.output_words)
                 for original, result in zip(originals, results):
-                    print(f"Original: {dh.byte_vec_to_sentence(original, self.detokenizer)} Result: {dh.byte_vec_to_sentence(result, self.detokenizer)}")
+                    print(
+                        f"Original: {dh.byte_vec_to_sentence(original, self.detokenizer)} Result: {dh.byte_vec_to_sentence(result, self.detokenizer)}")
