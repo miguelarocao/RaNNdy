@@ -142,10 +142,9 @@ class SentenceAutoEncoder:
     def train(self, plot=False, verbose=True):
         # Not sure this is necessary
         assert (self.mode == tf.estimator.ModeKeys.TRAIN)
-        losses = []
-        bleu_scores = []
+        losses = {DataSetType.TRAIN: [], DataSetType.VALIDATION: []}
+        bleu_scores = {DataSetType.TRAIN: [], DataSetType.VALIDATION: []}
         dataset_to_process = DataSetType.TRAIN
-        loss, bleu_score = None, None
         with tf.Session() as sess:
             self.iterator.table.init.run()
             self.iterator.reverse_table.init.run()
@@ -155,29 +154,36 @@ class SentenceAutoEncoder:
             start_time = time.time()
 
             epoch = 1
-            first_batch = True
+            batch_losses = []
+            batch_blue_scores = []
             while epoch <= self.num_epochs:
                 ### Run a train step ###
                 try:
                     loss, bleu_score = self.run_batch(sess,
                                                       run_update_step=(dataset_to_process == DataSetType.TRAIN),
-                                                      verbose=verbose and first_batch)
-                    losses.append(loss)
-                    bleu_scores.append(bleu_score)
-                    first_batch = False
+                                                      verbose=verbose and not batch_losses)
+                    batch_losses.append(loss)
+                    batch_blue_scores.append(bleu_score)
                 except tf.errors.OutOfRangeError:
-                    # Finished iterating through the training dataset.  Go to next epoch.
-                    print(f"[Epoch: {epoch}] {dataset_to_process.name} Loss: {loss} BLEU score: {bleu_score}")
-                    loss, bleu_score = None, None
+                    # Finished iterating through the dataset. Go to next epoch.
+
+                    # Update losses
+                    losses[dataset_to_process].append(np.mean(batch_losses))
+                    bleu_scores[dataset_to_process].append(np.mean(batch_blue_scores))
+                    batch_losses = []
+                    batch_blue_scores = []
+
+                    print(f"[Epoch: {epoch}] {dataset_to_process.name} "
+                          f"Loss: {losses[dataset_to_process][-1]} "
+                          f"BLEU score: {bleu_scores[dataset_to_process][-1]}")
+
+                    # Alternate between training and validation
                     if dataset_to_process == DataSetType.TRAIN:
                         dataset_to_process = DataSetType.VALIDATION
                     else:
                         dataset_to_process = DataSetType.TRAIN
                         epoch += 1
-                    print(dataset_to_process.name)
                     sess.run(self.iterator.initializer[dataset_to_process])
-                    first_batch = True
-                    continue
 
             print(f"Run time: {time.time() - start_time}")
 
@@ -185,9 +191,11 @@ class SentenceAutoEncoder:
             print(f"Model saved to {self.checkpoint_path}")
 
         if plot:
-            plt.plot(losses)
+            plt.plot(losses[DataSetType.TRAIN], label=DataSetType.TRAIN.name)
+            plt.plot(losses[DataSetType.VALIDATION], label=DataSetType.VALIDATION.name)
             plt.ylabel('crossent error')
             plt.xlabel('batch #')
+            plt.legend()
             plt.show()
 
     def test(self, verbose=True):
@@ -196,7 +204,7 @@ class SentenceAutoEncoder:
             self.iterator.table.init.run()
             self.iterator.reverse_table.init.run()
             sess.run(tf.global_variables_initializer())
-            sess.run(self.iterator.initializer["test"])
+            sess.run(self.iterator.initializer[DataSetType.TEST])
 
             start_time = time.time()
 
