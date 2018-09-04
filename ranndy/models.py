@@ -24,12 +24,16 @@ class SentenceAutoEncoder:
         self.embedding_size = 512
         self.lstm_size = 512
         self.batch_size = data_iterator.batch_size
-        self.num_epochs = 15
+        self.max_num_epochs = 15
         self.max_gradient_norm = 1.
         self.learning_rate = 0.0001
 
         # Data iterator
         self.iterator = data_iterator
+
+        # Convergence parameters
+        self.conv_window_size = 4  # Number of epochs to consider when checking for
+        self.conv_loss_threshold = 100000 # Minimum loss decrease required to continue
 
         # Setup embedding
         self.embedding = None
@@ -156,7 +160,7 @@ class SentenceAutoEncoder:
             epoch = 1
             batch_losses = []
             batch_blue_scores = []
-            while epoch <= self.num_epochs:
+            while True:
                 ### Run a train step ###
                 try:
                     loss, bleu_score = self.run_batch(sess,
@@ -183,6 +187,10 @@ class SentenceAutoEncoder:
                     else:
                         dataset_to_process = DataSetType.TRAIN
                         epoch += 1
+
+                    if epoch > self.max_num_epochs or self.is_converged(losses[DataSetType.VALIDATION]):
+                        break
+
                     sess.run(self.iterator.initializer[dataset_to_process])
 
             print(f"Run time: {time.time() - start_time}")
@@ -197,6 +205,29 @@ class SentenceAutoEncoder:
             plt.xlabel('batch #')
             plt.legend()
             plt.show()
+
+    def is_converged(self, loss):
+        """
+        Checks if the loss has converged.
+        Input:
+            loss [List of Floats]
+                The current loss
+        Output:
+            [Boolean]
+                True if the loss has converged, False otherwise.
+        """
+
+        # +1 because we are looking at the number of changes
+        if len(loss) < (self.conv_window_size + 1):
+            return False
+
+        # Check if any items in the window indicate non-convergence
+        for i in range(1, self.conv_window_size + 1):
+            if loss[- (i + 1)] - loss[-i] > self.conv_loss_threshold:
+                return False
+
+        print("Early convergence...")
+        return True
 
     def test(self, verbose=True):
         with tf.Session() as sess:
