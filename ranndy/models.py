@@ -1,11 +1,11 @@
-import nltk
+import nltk.translate.bleu_score as BleuScore
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import time
 import data_helpers as dh
 from constants import DataSetType
-
+from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
@@ -52,7 +52,7 @@ class SentenceAutoEncoder:
         self.checkpoint_path = "../data/checkpoints/checkpoint.ckpt"
 
         # Detokenizer
-        self.detokenizer = nltk.tokenize.treebank.TreebankWordDetokenizer()
+        self.detokenizer = TreebankWordDetokenizer()
 
     def _build_embedding(self, shape):
         self.embedding = tf.get_variable(
@@ -132,7 +132,7 @@ class SentenceAutoEncoder:
 
         # Calculate average BLEU score over batch
         avg_blue_score = np.mean(
-            [nltk.translate.bleu_score.sentence_bleu([in_], out_)
+            [BleuScore.sentence_bleu([in_], out_, smoothing_function= BleuScore.SmoothingFunction().method4)
              for in_, out_ in zip(input_words, output_words)])
 
         if verbose:
