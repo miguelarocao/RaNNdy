@@ -95,7 +95,6 @@ class DataIterator:
 
         # Create dataset
         sentences = tf.data.TextLineDataset(self.data_file)
-        # sentences = sentences.take(1000)
 
         # Split dataset sentences into vector of words
         sentences = sentences.map(lambda s: tf.string_split([s], delimiter=",").values)

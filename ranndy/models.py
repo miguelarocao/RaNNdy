@@ -1,11 +1,12 @@
+from constants import DataSetType
+import data_helpers as dh
+import matplotlib.pyplot as plt
+from nltk.tokenize.treebank import TreebankWordDetokenizer
 import nltk.translate.bleu_score as BleuScore
 import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
 import time
-import data_helpers as dh
-from constants import DataSetType
-from nltk.tokenize.treebank import TreebankWordDetokenizer
+
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
@@ -33,7 +34,7 @@ class SentenceAutoEncoder:
 
         # Convergence parameters
         self.conv_window_size = 4  # Number of epochs to consider when checking for
-        self.conv_loss_threshold = 100000 # Minimum loss decrease required to continue
+        self.conv_loss_threshold = 0.01  # Minimum loss decrease required to continue
 
         # Setup embedding
         self.embedding = None
@@ -132,7 +133,7 @@ class SentenceAutoEncoder:
 
         # Calculate average BLEU score over batch
         avg_blue_score = np.mean(
-            [BleuScore.sentence_bleu([in_], out_, smoothing_function= BleuScore.SmoothingFunction().method4)
+            [BleuScore.sentence_bleu([in_], out_, smoothing_function=BleuScore.SmoothingFunction().method4)
              for in_, out_ in zip(input_words, output_words)])
 
         if verbose:
