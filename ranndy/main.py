@@ -27,6 +27,9 @@ def main():
 
         # Step 3: Train
         ranndy.train(verbose=False)
+
+        # Step 4: Test
+        ranndy.test(verbose=True)
     else:
         # Step 1: Load Dataset w/ batch size of 1
         data_iterator = DataIterator(args.sentence_tokens, args.vocab, batch_size=2, shuffle=False,
