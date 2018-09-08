@@ -2,6 +2,8 @@ import string
 import argparse
 import nltk
 import csv
+import contraction_list as cl
+
 
 def parse_sentences(input_file, token_output_file, vocab_output_file, max_length=32, num_word_print=10):
     """
@@ -31,6 +33,7 @@ def parse_sentences(input_file, token_output_file, vocab_output_file, max_length
                 continue
 
             sentence = rap_word_expansion(line.lower())
+            sentence = expand_contractions(sentence)
 
             words = nltk.word_tokenize(sentence)
 
@@ -64,6 +67,18 @@ def rap_word_expansion(sentence):
     :return: Expanded sentence.
     """
     return sentence.replace("in' ", "ing ")
+
+def expand_contractions(sentence):
+    """
+    Expands common english contractions defined in the contraction_list.py file.
+    cl.regex_form is a regex object that is searched and each occurance of the contraction is 
+    replaced with its uncontracted counterpart.
+    :param sentence: [String] Sentence to expand.
+    :return: Expanded sentence.
+    """
+    def replace(match):
+        return cl.contraction_dict[match.group(0)]
+    return cl.compiled_regex.sub(replace, sentence)
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocessing.")

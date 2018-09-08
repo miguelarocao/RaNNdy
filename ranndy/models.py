@@ -18,10 +18,10 @@ class SentenceAutoEncoder:
         self.mode = mode
 
         # TODO: set up hyperparams properly
-        self.embedding_size = 256
+        self.embedding_size = 512
         self.lstm_size = 512
         self.batch_size = data_iterator.batch_size
-        self.num_epochs = 10
+        self.num_epochs = 15
         self.max_gradient_norm = 1.
         self.learning_rate = 0.0001
 
@@ -75,8 +75,8 @@ class SentenceAutoEncoder:
         else:
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
                                                               tf.fill([self.batch_size], 
-                                                              self.iterator.sos_index),
-                                                              self.iterator.eos_index)
+                                                              tf.cast(self.iterator.sos_index, tf.int32)),
+                                                              tf.cast(self.iterator.sos_index, tf.int32))
 
         # Decoder
         decoder = tf.contrib.seq2seq.BasicDecoder(self.decoder_cell, helper, self.encoder_state,
@@ -171,6 +171,6 @@ class SentenceAutoEncoder:
             sess.run(self.iterator.initializer)
             for i in range(num_batch_infer):
                 #self.iterator.lookup_words(self.outputs.sample_id)
-                originals, results = sess.run(self.input_words, self.output_words)
+                originals, results = sess.run([self.input_words, self.output_words])
                 for original, result in zip(originals, results):
                     print(f"Original: {dh.byte_vec_to_sentence(original, self.detokenizer)} Result: {dh.byte_vec_to_sentence(result, self.detokenizer)}")
