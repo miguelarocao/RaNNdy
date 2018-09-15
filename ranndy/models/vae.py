@@ -21,11 +21,10 @@ class SentenceVAE(SentenceAutoEncoder):
         super().__init__(data_iterator, mode)
 
     def _build_encoder(self):
-        self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size, name="vae_encoder_cell")
-        output, encoder_state_tuple = tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
-                                             sequence_length=self.iterator.source_length, dtype=tf.float32)
+        _, encoder_state_tuple = self._build_encoder_rnn()
 
-        # Since encoder state is an LSTMStateTuple, we extract only the state
+        # Since encoder state is an LSTMStateTuple, we extract only the state.
+        # Documentation: https://www.tensorflow.org/api_docs/python/tf/contrib/rnn/LSTMStateTuple
         encoder_state = encoder_state_tuple.c
 
         # Layers to convert output to mean and variance
@@ -38,12 +37,8 @@ class SentenceVAE(SentenceAutoEncoder):
         self.decoder_state_input = tf.contrib.rnn.LSTMStateTuple(c=self.sampled_state, h=encoder_state_tuple.h)
 
     def _build_trainer(self):
-
         # Build reconstruction loss
-        target_weights = tf.sequence_mask(self.iterator.target_length, dtype=self.logits.dtype)
-        crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target_output,
-                                                                  logits=self.logits)
-        self.reconstruction_loss = tf.reduce_sum(crossent * target_weights)/self.batch_size
+        self.reconstruction_loss = self._get_reconstruction_loss()
 
         # Build KL loss
         self.kl_loss = self.kl_divergence_multigauss(self.encoding_mean, tf.exp(self.encoding_log_var))/self.batch_size
@@ -55,15 +50,8 @@ class SentenceVAE(SentenceAutoEncoder):
         # Complete loss
         self.train_loss = self.reconstruction_loss + self.kl_weight*self.kl_loss
 
-        # Calculate and clip gradients
-        params = tf.trainable_variables()
-        gradients = tf.gradients(self.train_loss, params)
-        clipped_gradients, _ = tf.clip_by_global_norm(
-            gradients, self.max_gradient_norm)
-
         # Optimization
-        optimizer = tf.train.AdamOptimizer(self.learning_rate)
-        self.update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
+        self.update_step = self._build_optimizer(self.train_loss)
 
     def gaussian_sample(self, mean, variance):
         eps = tf.random_normal(tf.shape(mean), mean=0, stddev=1.0)

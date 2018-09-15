@@ -55,12 +55,20 @@ class SentenceAutoEncoder:
         self.enc_embedding_output = tf.nn.embedding_lookup(self.embedding, self.iterator.source)
         self.dec_embedding_output = tf.nn.embedding_lookup(self.embedding, self.iterator.target_input)
 
-    def _build_encoder(self):
+    def _build_encoder_rnn(self):
+        """
+        :return: Encoder output and state tensor.
+        """
         # Build RNN cell
-        self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size)
-        _, encoder_state = tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
+        self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size, name="encoder_cell")
+        return tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
                                              sequence_length=self.iterator.source_length,
                                              dtype=tf.float32)
+
+    def _build_encoder(self):
+        # Build RNN cell
+        _, encoder_state = self._build_encoder_rnn()
+
         # Assign encoder state as decoder state input
         self.decoder_state_input = encoder_state
 
@@ -96,24 +104,36 @@ class SentenceAutoEncoder:
                 tf.reduce_max(self.iterator.target_length) * 2))
             self.logits = self.outputs.rnn_output
 
-    def _build_trainer(self):
+    def _get_reconstruction_loss(self):
+        """
+        :return: Reconstruction loss tensor.
+        """
         # TODO: Figure out why target_weights is necessary
         target_weights = tf.sequence_mask(self.iterator.target_length, dtype=self.logits.dtype)
 
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target_output,
                                                                   logits=self.logits)
 
-        self.train_loss = (tf.reduce_sum(crossent * target_weights) / self.batch_size)
+        return (tf.reduce_sum(crossent * target_weights) / self.batch_size)
 
+    def _build_optimizer(self, loss):
+        """
+        :param loss: Loss to optimize.
+        :return: Training step tensor.
+        """
         # Calculate and clip gradients
         params = tf.trainable_variables()
-        gradients = tf.gradients(self.train_loss, params)
+        gradients = tf.gradients(loss, params)
         clipped_gradients, _ = tf.clip_by_global_norm(
             gradients, self.max_gradient_norm)
 
         # Optimization
         optimizer = tf.train.AdamOptimizer(self.learning_rate)
-        self.update_step = optimizer.apply_gradients(zip(clipped_gradients, params))
+        return optimizer.apply_gradients(zip(clipped_gradients, params))
+
+    def _build_trainer(self):
+        self.train_loss = self._get_reconstruction_loss()
+        self.update_step = self._build_optimizer(self.train_loss)
 
     def train(self, plot=False, verbose=True):
         assert (self.mode == tf.estimator.ModeKeys.TRAIN)
