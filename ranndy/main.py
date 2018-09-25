@@ -20,13 +20,16 @@ def main():
 
     if args.mode == 'train':
         # Step 1: Load Dataset
-        data_iterator = DataIterator(args.sentence_tokens, args.vocab, max_vocab_size=args.max_vocab_size)
+        data_iterator = DataIterator(args.sentence_tokens, args.vocab, batch_size=128, max_vocab_size=args.max_vocab_size)
 
         # Step 2: Create Auto Encoder in Training Mode
         ranndy = SentenceVAE(data_iterator, tf.estimator.ModeKeys.TRAIN)
 
         # Step 3: Train
-        ranndy.train()
+        ranndy.train(verbose=False)
+
+        # Step 4: Test
+        ranndy.test(verbose=True)
     else:
         # Step 1: Load Dataset w/ batch size of 1
         data_iterator = DataIterator(args.sentence_tokens, args.vocab, batch_size=2, shuffle=False,
