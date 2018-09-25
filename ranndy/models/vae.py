@@ -48,10 +48,10 @@ class SentenceVAE(SentenceAutoEncoder):
         self.kl_weight = tf.sigmoid(tf.assign_add(self.train_step_count, 1)*self.kl_weight_scaling + self.kl_weight_offset)
 
         # Complete loss
-        self.train_loss = self.reconstruction_loss + self.kl_weight*self.kl_loss
+        self.loss = self.reconstruction_loss + self.kl_weight*self.kl_loss
 
         # Optimization
-        self.update_step = self._build_optimizer(self.train_loss)
+        self.update_step = self._build_optimizer(self.loss)
 
     def gaussian_sample(self, mean, variance):
         eps = tf.random_normal(tf.shape(mean), mean=0, stddev=1.0)
