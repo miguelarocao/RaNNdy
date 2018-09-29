@@ -1,6 +1,7 @@
 # Based on: https://arxiv.org/pdf/1511.06349.pdf
 # TODO: Word dropout and historyless decoding
 
+from constants import MetricType
 from models.auto_encoder import SentenceAutoEncoder
 import tensorflow as tf
 
@@ -13,8 +14,6 @@ class SentenceVAE(SentenceAutoEncoder):
         self.encoding_mean = None
         self.encoding_log_var = None # Note: Log(variance) is learned to ensure positivity
         self.sampled_state = None
-        self.reconstruction_loss = None
-        self.kl_loss = None
         self.kl_weight_scaling = 10 # TODO: Tune these values
         self.kl_weight_offset = 5000
 
@@ -38,20 +37,25 @@ class SentenceVAE(SentenceAutoEncoder):
 
     def _build_trainer(self):
         # Build reconstruction loss
-        self.reconstruction_loss = self._get_reconstruction_loss()
+        reconstruction_loss = self._get_reconstruction_loss()
 
         # Build KL loss
-        self.kl_loss = self.kl_divergence_multigauss(self.encoding_mean, tf.exp(self.encoding_log_var))/self.batch_size
+        kl_loss = self.kl_divergence_multigauss(self.encoding_mean, tf.exp(self.encoding_log_var))/self.batch_size
 
         # Build KL loss weighting
         self.train_step_count = tf.get_variable("train_step_count", shape=[], initializer=tf.constant_initializer(-1))
         self.kl_weight = tf.sigmoid(tf.assign_add(self.train_step_count, 1)*self.kl_weight_scaling + self.kl_weight_offset)
 
-        # Complete loss
-        self.loss = self.reconstruction_loss + self.kl_weight*self.kl_loss
+        # Total loss
+        total_loss = reconstruction_loss + self.kl_weight*kl_loss
 
         # Optimization
-        self.update_step = self._build_optimizer(self.loss)
+        self.update_step = self._build_optimizer(total_loss)
+
+        # Populate metric dict
+        self.metric_dict[MetricType.TOTAL_LOSS] = total_loss
+        self.metric_dict[MetricType.RECONSTRUCTION_LOSS] = reconstruction_loss
+        self.metric_dict[MetricType.KL_LOSS] = kl_loss
 
     def gaussian_sample(self, mean, variance):
         eps = tf.random_normal(tf.shape(mean), mean=0, stddev=1.0)

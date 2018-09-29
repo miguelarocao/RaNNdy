@@ -1,4 +1,4 @@
-from constants import DataSetType
+from constants import DataSetType, MetricType
 import data_helpers as dh
 import matplotlib.pyplot as plt
 from nltk.tokenize.treebank import TreebankWordDetokenizer
@@ -6,7 +6,6 @@ import nltk.translate.bleu_score as BleuScore
 import numpy as np
 import tensorflow as tf
 import time
-
 
 
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
@@ -46,6 +45,7 @@ class SentenceAutoEncoder:
         self._build_decoder()
         self.input_words = self.iterator.lookup_words(self.iterator.source)
         self.output_words = self.iterator.lookup_words(self.outputs.sample_id)
+        self.metric_dict = {}
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             self._build_trainer()
 
@@ -70,8 +70,8 @@ class SentenceAutoEncoder:
         # Build RNN cell
         self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size, name="encoder_cell")
         return tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
-                                             sequence_length=self.iterator.source_length,
-                                             dtype=tf.float32)
+                                 sequence_length=self.iterator.source_length,
+                                 dtype=tf.float32)
 
     def _build_encoder(self):
         # Build RNN cell
@@ -140,22 +140,28 @@ class SentenceAutoEncoder:
         return optimizer.apply_gradients(zip(clipped_gradients, params))
 
     def _build_trainer(self):
-        self.loss = self._get_reconstruction_loss()
-        self.update_step = self._build_optimizer(self.loss)
+        reconstruction_loss = self._get_reconstruction_loss()
+        self.update_step = self._build_optimizer(reconstruction_loss)
+        self.metric_dict[MetricType.TOTAL_LOSS] = reconstruction_loss
 
     def run_batch(self, sess, run_update_step=False, verbose=True):
-        shared_ops = [self.loss, self.iterator.source, self.outputs.sample_id,
-                      self.input_words, self.output_words]
+        shared_ops = [loss for loss in self.metric_dict.values()] + [self.iterator.source, self.outputs.sample_id,
+                                                                     self.input_words, self.output_words]
+        metric_results = {}
         if run_update_step:
-            loss, source_tokens, output_tokens, input_words, output_words, _ = sess.run(shared_ops + [self.update_step])
+            output_tuple = sess.run(shared_ops + [self.update_step])[:-1]
         else:
-            loss, source_tokens, output_tokens, input_words, output_words = sess.run(shared_ops)
+            output_tuple = sess.run(shared_ops)
+        for i, key in enumerate(self.metric_dict.keys()):
+            metric_results[key] = output_tuple[i]
+
+        source_tokens, output_tokens, input_words, output_words = output_tuple[len(self.metric_dict):]
 
         in_words = [list(map(lambda x: x.decode(), y)) for y in input_words]
         out_words = [list(map(lambda x: x.decode(), y)) for y in output_words]
 
         # Calculate average BLEU score over batch
-        avg_blue_score = np.mean(
+        metric_results[MetricType.BLEU] = np.mean(
             [BleuScore.sentence_bleu([in_], out_, smoothing_function=BleuScore.SmoothingFunction().method4)
              for in_, out_ in zip(input_words, output_words)])
 
@@ -165,12 +171,18 @@ class SentenceAutoEncoder:
             print(f"Input words (size: {len(in_words[0])}): {' '.join(in_words[0])}")
             print(f"Output words (size: {len(out_words[0])}): {' '.join(out_words[0])}")
 
-        return loss, avg_blue_score
+        return metric_results
+
+    def _print_metrics(self, epoch, metrics, dataset_to_print):
+        output_string = f"[Epoch: {epoch}] {dataset_to_print.name}"
+        for metric_type, values in metrics.items():
+            output_string += f" {metric_type.name.capitalize()}: {values[dataset_to_print][-1]}"
+        print(output_string)
 
     def train(self, plot=False, verbose=True):
         assert (self.mode == tf.estimator.ModeKeys.TRAIN)
-        losses = {DataSetType.TRAIN: [], DataSetType.VALIDATION: []}
-        bleu_scores = {DataSetType.TRAIN: [], DataSetType.VALIDATION: []}
+        metric_keys = list(self.metric_dict.keys()) + [MetricType.BLEU]
+        metric_results = {name: {DataSetType.TRAIN: [], DataSetType.VALIDATION: []} for name in metric_keys}
         dataset_to_process = DataSetType.TRAIN
         with tf.Session() as sess:
             self.iterator.table.init.run()
@@ -181,28 +193,24 @@ class SentenceAutoEncoder:
             start_time = time.time()
 
             epoch = 1
-            batch_losses = []
-            batch_blue_scores = []
+            metric_batch_results = {name: [] for name in metric_keys}
             while True:
                 ### Run a train step ###
                 try:
-                    loss, bleu_score = self.run_batch(sess,
-                                                      run_update_step=(dataset_to_process == DataSetType.TRAIN),
-                                                      verbose=verbose and not batch_losses)
-                    batch_losses.append(loss)
-                    batch_blue_scores.append(bleu_score)
+                    batch_results = self.run_batch(sess,
+                                                   run_update_step=(dataset_to_process == DataSetType.TRAIN),
+                                                   verbose=verbose and not metric_batch_results[MetricType.TOTAL_LOSS])
+                    for key, value in batch_results.items():
+                        metric_batch_results[key].append(value)
                 except tf.errors.OutOfRangeError:
                     # Finished iterating through the dataset. Go to next epoch.
 
                     # Update losses
-                    losses[dataset_to_process].append(np.mean(batch_losses))
-                    bleu_scores[dataset_to_process].append(np.mean(batch_blue_scores))
-                    batch_losses = []
-                    batch_blue_scores = []
+                    for key in metric_keys:
+                        metric_results[key][dataset_to_process].append(np.mean(metric_batch_results[key]))
+                    metric_batch_results = {name: [] for name in metric_batch_results.keys()}
 
-                    print(f"[Epoch: {epoch}] {dataset_to_process.name} "
-                          f"Loss: {losses[dataset_to_process][-1]} "
-                          f"BLEU score: {bleu_scores[dataset_to_process][-1]}")
+                    self._print_metrics(epoch, metric_results, dataset_to_process)
 
                     # Alternate between training and validation
                     if dataset_to_process == DataSetType.TRAIN:
@@ -211,7 +219,8 @@ class SentenceAutoEncoder:
                         dataset_to_process = DataSetType.TRAIN
                         epoch += 1
 
-                    if epoch > self.max_num_epochs or self.is_converged(losses[DataSetType.VALIDATION]):
+                    if epoch > self.max_num_epochs or self.is_converged(
+                            metric_results[MetricType.TOTAL_LOSS][DataSetType.VALIDATION]):
                         break
 
                     sess.run(self.iterator.initializer[dataset_to_process])
@@ -222,8 +231,8 @@ class SentenceAutoEncoder:
             print(f"Model saved to {self.checkpoint_path}")
 
         if plot:
-            plt.plot(losses[DataSetType.TRAIN], label=DataSetType.TRAIN.name)
-            plt.plot(losses[DataSetType.VALIDATION], label=DataSetType.VALIDATION.name)
+            plt.plot(metric_results[MetricType.TOTAL_LOSS][DataSetType.TRAIN], label=DataSetType.TRAIN.name)
+            plt.plot(metric_results[MetricType.TOTAL_LOSS][DataSetType.VALIDATION], label=DataSetType.VALIDATION.name)
             plt.ylabel('crossent error')
             plt.xlabel('batch #')
             plt.legend()
@@ -265,8 +274,10 @@ class SentenceAutoEncoder:
             ### Run a test step ###
             while True:
                 try:
-                    loss, bleu_score = self.run_batch(sess, run_update_step=False, verbose=verbose)
-                    print(f"Test results\nLoss: {loss} BLEU score: {bleu_score}")
+                    batch_results = self.run_batch(sess, run_update_step=False, verbose=verbose)
+                    print(
+                        f"Test results\nTotal Loss: {batch_results[MetricType.TOTAL_LOSS]} "
+                        f"BLEU score: {batch_results[MetricType.BLEU]}")
                 except tf.errors.OutOfRangeError:
                     # Finished going through the training dataset.  Go to next epoch.
                     break
