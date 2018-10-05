@@ -19,17 +19,28 @@ def main():
     args = parser.parse_args()
 
     if args.mode == 'train':
+        # TODO: Use better path
+        comet_key = None
+        try:
+            with open('comet_key.txt', 'r') as key_file:
+                comet_key = key_file.readline().strip()
+        except:
+            pass
+
         # Step 1: Load Dataset
         data_iterator = DataIterator(args.sentence_tokens, args.vocab, batch_size=128, max_vocab_size=args.max_vocab_size)
 
         # Step 2: Create Auto Encoder in Training Mode
-        ranndy = SentenceVAE(data_iterator, tf.estimator.ModeKeys.TRAIN)
+        ranndy = SentenceVAE(data_iterator, tf.estimator.ModeKeys.TRAIN, log_api_key=comet_key)
 
         # Step 3: Train
         ranndy.train(verbose=False)
 
         # Step 4: Test
         ranndy.test(verbose=True)
+
+        # Step 5: Plot
+        ranndy.plot()
     else:
         # Step 1: Load Dataset w/ batch size of 1
         data_iterator = DataIterator(args.sentence_tokens, args.vocab, batch_size=2, shuffle=False,

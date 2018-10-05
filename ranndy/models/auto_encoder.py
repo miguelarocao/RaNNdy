@@ -1,3 +1,4 @@
+from comet_ml import Experiment
 from constants import DataSetType, MetricType
 import data_helpers as dh
 import matplotlib.pyplot as plt
@@ -11,9 +12,11 @@ import time
 # Heavily based on: https://www.tensorflow.org/tutorials/seq2seq
 
 class SentenceAutoEncoder:
-    """ Sentence auto encoder """
+    """ Sentence auto encoder
+        TODO: consider GRU instead of LSTMS
+    """
 
-    def __init__(self, data_iterator, mode=tf.estimator.ModeKeys.TRAIN):
+    def __init__(self, data_iterator, mode=tf.estimator.ModeKeys.TRAIN, log_api_key=None):
         """
         :param data_iterator: [ranndy.DataIterator] iterate through data
         """
@@ -21,12 +24,16 @@ class SentenceAutoEncoder:
         self.mode = mode
 
         # TODO: set up hyperparams properly
-        self.embedding_size = 512
-        self.lstm_size = 512
-        self.batch_size = data_iterator.batch_size
-        self.max_num_epochs = 15
-        self.max_gradient_norm = 1.
-        self.learning_rate = 0.0001
+        self.params = {}
+        self.params['embedding_size'] = 512
+        self.params['lstm_size'] = 512
+        self.params['batch_size'] = data_iterator.batch_size
+        self.params['max_num_epochs'] = 15
+        self.params['max_gradient_norm'] = 1.
+        self.params['learning_rate'] = 0.0001
+
+        # Initialize loss dictionary
+        self.loss_metrics = {}
 
         # Data iterator
         self.iterator = data_iterator
@@ -40,14 +47,14 @@ class SentenceAutoEncoder:
         self.enc_embedding_output = None
         self.dec_embedding_output = None
         self.decoder_state_input = None
-        self._build_embedding(shape=[self.iterator.vocab_size, self.embedding_size])
+        self._build_embedding(shape=[self.iterator.vocab_size, self.params['embedding_size']])
         self._build_encoder()
         self._build_decoder()
+        self.update_step = self._build_loss()
         self.input_words = self.iterator.lookup_words(self.iterator.source)
         self.output_words = self.iterator.lookup_words(self.outputs.sample_id)
-        self.metric_dict = {}
         if self.mode == tf.estimator.ModeKeys.TRAIN:
-            self._build_trainer()
+            self.update_step = self._build_optimizer()
 
         # Saver
         self.saver = tf.train.Saver()
@@ -55,6 +62,15 @@ class SentenceAutoEncoder:
 
         # Detokenizer
         self.detokenizer = TreebankWordDetokenizer()
+
+        self.metric_keys = list(self.loss_metrics.keys()) + [MetricType.BLEU]
+        self.metrics = {metric.name: {DataSetType.TRAIN: [], DataSetType.VALIDATION: []} for metric in self.metric_keys}
+
+        if log_api_key:
+            self.experiment = Experiment(api_key=log_api_key, project_name="test", \
+                                         auto_param_logging=False, auto_metric_logging=False)
+            self.experiment.log_multiple_params(self.params)
+            self.experiment.log_multiple_metrics(self.metrics)
 
     def _build_embedding(self, shape):
         self.embedding = tf.get_variable(
@@ -68,7 +84,7 @@ class SentenceAutoEncoder:
         :return: Encoder output and state tensor.
         """
         # Build RNN cell
-        self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.lstm_size, name="encoder_cell")
+        self.encoder_cell = tf.nn.rnn_cell.LSTMCell(self.params['lstm_size'], name="encoder_cell")
         return tf.nn.dynamic_rnn(self.encoder_cell, self.enc_embedding_output,
                                  sequence_length=self.iterator.source_length,
                                  dtype=tf.float32)
@@ -86,14 +102,14 @@ class SentenceAutoEncoder:
         projection_layer = tf.layers.Dense(self.iterator.vocab_size, use_bias=False)
 
         # Build RNN cell
-        self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(self.lstm_size)
+        self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(self.params['lstm_size'])
 
         # Helper
         if self.mode == tf.estimator.ModeKeys.TRAIN:
             helper = tf.contrib.seq2seq.TrainingHelper(self.dec_embedding_output, self.iterator.target_length)
         else:
             helper = tf.contrib.seq2seq.GreedyEmbeddingHelper(self.embedding,
-                                                              tf.fill([self.batch_size],
+                                                              tf.fill([self.params['batch_size']],
                                                                       tf.cast(self.iterator.sos_index, tf.int32)),
                                                               tf.cast(self.iterator.eos_index, tf.int32))
 
@@ -122,40 +138,39 @@ class SentenceAutoEncoder:
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.iterator.target_output,
                                                                   logits=self.logits)
 
-        return (tf.reduce_sum(crossent * target_weights) / self.batch_size)
+        return (tf.reduce_sum(crossent * target_weights) / self.params['batch_size'])
 
-    def _build_optimizer(self, loss):
+    def _build_optimizer(self):
         """
         :param loss: Loss to optimize.
         :return: Training step tensor.
         """
         # Calculate and clip gradients
         params = tf.trainable_variables()
-        gradients = tf.gradients(loss, params)
+        gradients = tf.gradients(self.loss_metrics[MetricType.TOTAL_LOSS], params)
         clipped_gradients, _ = tf.clip_by_global_norm(
-            gradients, self.max_gradient_norm)
+            gradients, self.params['max_gradient_norm'])
 
         # Optimization
-        optimizer = tf.train.AdamOptimizer(self.learning_rate)
+        optimizer = tf.train.AdamOptimizer(self.params['learning_rate'])
         return optimizer.apply_gradients(zip(clipped_gradients, params))
 
-    def _build_trainer(self):
+    def _build_loss(self):
         reconstruction_loss = self._get_reconstruction_loss()
-        self.update_step = self._build_optimizer(reconstruction_loss)
-        self.metric_dict[MetricType.TOTAL_LOSS] = reconstruction_loss
+        self.loss_metrics[MetricType.TOTAL_LOSS] = reconstruction_loss
 
     def run_batch(self, sess, run_update_step=False, verbose=True):
-        shared_ops = [loss for loss in self.metric_dict.values()] + [self.iterator.source, self.outputs.sample_id,
+        shared_ops = [loss for loss in self.loss_metrics.values()] + [self.iterator.source, self.outputs.sample_id,
                                                                      self.input_words, self.output_words]
         metric_results = {}
         if run_update_step:
             output_tuple = sess.run(shared_ops + [self.update_step])[:-1]
         else:
             output_tuple = sess.run(shared_ops)
-        for i, key in enumerate(self.metric_dict.keys()):
+        for i, key in enumerate(self.loss_metrics.keys()):
             metric_results[key] = output_tuple[i]
 
-        source_tokens, output_tokens, input_words, output_words = output_tuple[len(self.metric_dict):]
+        source_tokens, output_tokens, input_words, output_words = output_tuple[len(self.loss_metrics):]
 
         in_words = [list(map(lambda x: x.decode(), y)) for y in input_words]
         out_words = [list(map(lambda x: x.decode(), y)) for y in output_words]
@@ -173,32 +188,31 @@ class SentenceAutoEncoder:
 
         return metric_results
 
-    def _print_metrics(self, epoch, metrics, dataset_to_print):
+    def _print_metrics(self, epoch, dataset_to_print):
         output_string = f"[Epoch: {epoch}] {dataset_to_print.name}"
-        for metric_type, values in metrics.items():
-            output_string += f" {metric_type.name.capitalize()}: {values[dataset_to_print][-1]}"
+        for metric_type, values in self.metrics.items():
+            output_string += f" {metric_type.capitalize()}: {values[dataset_to_print][-1]}"
         print(output_string)
 
-    def train(self, plot=False, verbose=True):
-        assert (self.mode == tf.estimator.ModeKeys.TRAIN)
-        metric_keys = list(self.metric_dict.keys()) + [MetricType.BLEU]
-        metric_results = {name: {DataSetType.TRAIN: [], DataSetType.VALIDATION: []} for name in metric_keys}
-        dataset_to_process = DataSetType.TRAIN
+    def run(self, data_set, verbose=False):
         with tf.Session() as sess:
+            if data_set == DataSetType.TEST:
+                self.saver.restore(sess, self.checkpoint_path)
             self.iterator.table.init.run()
             self.iterator.reverse_table.init.run()
             sess.run(tf.global_variables_initializer())
-            sess.run(self.iterator.initializer[dataset_to_process])
+            sess.run(self.iterator.initializer[data_set])
 
             start_time = time.time()
 
             epoch = 1
-            metric_batch_results = {name: [] for name in metric_keys}
+            metric_batch_results = {metric: [] for metric in self.metric_keys}
             while True:
                 ### Run a train step ###
                 try:
+                    # NOTE: verbose if verbose and first batch
                     batch_results = self.run_batch(sess,
-                                                   run_update_step=(dataset_to_process == DataSetType.TRAIN),
+                                                   run_update_step=(data_set == DataSetType.TRAIN),
                                                    verbose=verbose and not metric_batch_results[MetricType.TOTAL_LOSS])
                     for key, value in batch_results.items():
                         metric_batch_results[key].append(value)
@@ -206,37 +220,32 @@ class SentenceAutoEncoder:
                     # Finished iterating through the dataset. Go to next epoch.
 
                     # Update losses
-                    for key in metric_keys:
-                        metric_results[key][dataset_to_process].append(np.mean(metric_batch_results[key]))
+                    for key in self.metric_keys:
+                        self.metrics[key][data_set].append(np.mean(metric_batch_results[key]))
                     metric_batch_results = {name: [] for name in metric_batch_results.keys()}
 
-                    self._print_metrics(epoch, metric_results, dataset_to_process)
+                    self._print_metrics(epoch, data_set)
 
                     # Alternate between training and validation
-                    if dataset_to_process == DataSetType.TRAIN:
-                        dataset_to_process = DataSetType.VALIDATION
+                    if data_set == DataSetType.TEST:
+                        break
+                    elif data_set == DataSetType.TRAIN:
+                        data_set = DataSetType.VALIDATION
                     else:
-                        dataset_to_process = DataSetType.TRAIN
+                        data_set = DataSetType.TRAIN
                         epoch += 1
 
-                    if epoch > self.max_num_epochs or self.is_converged(
-                            metric_results[MetricType.TOTAL_LOSS][DataSetType.VALIDATION]):
+                    if epoch > self.params['max_num_epochs'] or \
+                       self.is_converged(self.metrics[MetricType.TOTAL_LOSS.name][DataSetType.VALIDATION]):
                         break
 
-                    sess.run(self.iterator.initializer[dataset_to_process])
+                    sess.run(self.iterator.initializer[data_set])
 
             print(f"Run time: {time.time() - start_time}")
 
-            self.saver.save(sess, self.checkpoint_path)
-            print(f"Model saved to {self.checkpoint_path}")
-
-        if plot:
-            plt.plot(metric_results[MetricType.TOTAL_LOSS][DataSetType.TRAIN], label=DataSetType.TRAIN.name)
-            plt.plot(metric_results[MetricType.TOTAL_LOSS][DataSetType.VALIDATION], label=DataSetType.VALIDATION.name)
-            plt.ylabel('crossent error')
-            plt.xlabel('batch #')
-            plt.legend()
-            plt.show()
+            if data_set != DataSetType.TEST:
+                self.saver.save(sess, self.checkpoint_path)
+                print(f"Model saved to {self.checkpoint_path}")
 
     def is_converged(self, loss):
         """
@@ -261,30 +270,23 @@ class SentenceAutoEncoder:
         print("Early convergence...")
         return True
 
+    def train(self, plot=False, verbose=True):
+        assert (self.mode == tf.estimator.ModeKeys.TRAIN)
+        self.run(DataSetType.TRAIN)
+
     def test(self, verbose=True):
-        with tf.Session() as sess:
-            self.saver.restore(sess, self.checkpoint_path)
-            self.iterator.table.init.run()
-            self.iterator.reverse_table.init.run()
-            sess.run(tf.global_variables_initializer())
-            sess.run(self.iterator.initializer[DataSetType.TEST])
+        self.run(DataSetType.TEST)
 
-            start_time = time.time()
-
-            ### Run a test step ###
-            while True:
-                try:
-                    batch_results = self.run_batch(sess, run_update_step=False, verbose=verbose)
-                    print(
-                        f"Test results\nTotal Loss: {batch_results[MetricType.TOTAL_LOSS]} "
-                        f"BLEU score: {batch_results[MetricType.BLEU]}")
-                except tf.errors.OutOfRangeError:
-                    # Finished going through the training dataset.  Go to next epoch.
-                    break
-
-            print(f"Run time: {time.time() - start_time}")
+    def plot(self):
+        plt.plot(self.metrics[MetricType.TOTAL_LOSS][DataSetType.TRAIN], label=DataSetType.TRAIN.name)
+        plt.plot(self.metrics[MetricType.TOTAL_LOSS][DataSetType.VALIDATION], label=DataSetType.VALIDATION.name)
+        plt.ylabel('crossent error')
+        plt.xlabel('batch #')
+        plt.legend()
+        plt.show()
 
     def infer(self, num_batch_infer):
+        # TODO: FIX - self.iterator.initializer is now a list and needs to be indexed
         assert (self.mode == tf.estimator.ModeKeys.PREDICT)
         with tf.Session() as sess:
             self.saver.restore(sess, self.checkpoint_path)
